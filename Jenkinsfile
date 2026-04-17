@@ -10,7 +10,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
 
-        DOCKER_IMAGE = "Dushyanth M/mern-app"
+        DOCKER_IMAGE = "dushyanth25/mern-app"
         IMAGE_TAG = "latest"
     }
 
