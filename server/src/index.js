@@ -38,18 +38,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Internal server error' });
 });
 
-// Connect to MongoDB then start server
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB');
-    app.listen(PORT, () => {
-      console.log(`🦇 Batman server running on http://localhost:${PORT}`);
+// Connect to MongoDB and start server only if this file is run directly
+if (require.main === module) {
+  mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+      console.log('✅ Connected to MongoDB');
+      app.listen(PORT, () => {
+        console.log(`🦇 Batman server running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error('❌ MongoDB connection failed:', err.message);
+      process.exit(1);
     });
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
-  });
+}
 
 module.exports = app;
