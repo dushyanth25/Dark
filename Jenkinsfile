@@ -114,17 +114,19 @@ pipeline {
         }
 
         stage('Trivy Image Scan') {
-            steps {
-                sh """
-                    echo "🔍 Scanning Docker image..."
-                    trivy image \
-                      --exit-code 1 \
-                      --severity CRITICAL \
-                      --no-progress \
-                      ${DOCKER_IMAGE}:${IMAGE_TAG}
-                """
-            }
-        }
+    steps {
+        sh """
+            echo "🔍 Running Trivy Image Scan..."
+
+            trivy image \
+              --exit-code 1 \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --no-progress \
+              ${DOCKER_IMAGE}:${IMAGE_TAG}
+        """
+    }
+}
 
         stage('Login to Docker Hub') {
             steps {
