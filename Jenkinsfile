@@ -13,7 +13,6 @@ pipeline {
         DOCKER_REGISTRY = "dushyanth25"
         DOCKER_IMAGE_NAME = "mern-app"
 
-        // IMPORTANT: use versioned tag (NOT latest)
         IMAGE_TAG = "${BUILD_NUMBER}"
         DOCKER_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${IMAGE_TAG}"
 
@@ -24,6 +23,7 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     stages {
@@ -33,6 +33,10 @@ pipeline {
                 checkout scm
             }
         }
+
+        /* =========================
+           INSTALL DEPENDENCIES
+        ========================== */
 
         stage('Install Backend Dependencies') {
             steps {
@@ -65,6 +69,10 @@ pipeline {
                 }
             }
         }
+
+        /* =========================
+           SECURITY SCANS
+        ========================== */
 
         stage('Trivy FS Scan') {
             steps {
@@ -102,6 +110,10 @@ pipeline {
                 }
             }
         }
+
+        /* =========================
+           DOCKER BUILD & PUSH
+        ========================== */
 
         stage('Build Docker Image') {
             steps {
@@ -162,13 +174,12 @@ pipeline {
                     # Ensure namespace exists
                     kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
-                    # Apply K8s manifests
+                    # Apply K8s manifests (NO SECRET YAML — created manually or via Jenkins creds)
                     kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/secret.yaml -n ${K8S_NAMESPACE}
                     kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
                     kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
 
-                    # Update image in deployment
+                    # Update deployment image (REAL rollout trigger)
                     kubectl set image deployment/${K8S_DEPLOYMENT} \
                       ${K8S_DEPLOYMENT}=${DOCKER_IMAGE} \
                       -n ${K8S_NAMESPACE}
@@ -196,15 +207,25 @@ pipeline {
                 """
             }
         }
+
+        stage('Health Check') {
+            steps {
+                sh """
+                    echo "🏥 Basic Health Check"
+                    kubectl get pods -n ${K8S_NAMESPACE}
+                """
+            }
+        }
     }
 
     post {
+
         success {
             echo "✅ CI/CD Pipeline completed successfully!"
         }
 
         failure {
-            echo "❌ Pipeline failed! Rolling back..."
+            echo "❌ Pipeline failed! Rolling back deployment..."
 
             sh """
                 kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
