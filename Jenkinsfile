@@ -21,6 +21,12 @@ pipeline {
         K8S_NAMESPACE = "mern"
         K8S_DEPLOYMENT = "mern-app"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
+        
+        // ⚠️ DEV ONLY: MongoDB Atlas & API Credentials
+        // TODO: Move to Jenkins Credentials Plugin for production
+        MONGO_ATLAS_URI = "mongodb+srv://dushyanth520:904918@cluster0.kag8m76.mongodb.net/batman_auth?retryWrites=true&w=majority&appName=Cluster0"
+        JENKINS_JWT_SECRET = "batman_dark_knight_secret_key_2024"
+        JENKINS_GROQ_KEY = "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"
     }
 
     options {
@@ -173,28 +179,16 @@ pipeline {
                     # Create namespace if not exists
                     kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                     
-                    # ⚠️ DEV ONLY: Load credentials from environment (set in Jenkins)
-                    # In production, use Jenkins Credentials Plugin or HashiCorp Vault
-                    
-                    # Example credentials (set these via: Jenkins Job → Configure → Build Environment → Inject secrets)
-                    # MONGO_URI: MongoDB Atlas connection string
-                    # JWT_SECRET: JWT signing key
-                    # GROQ_API_KEY: Groq API key
-                    
-                    # Export credentails (replace with actual values in Jenkins configuration)
-                    MONGO_URI="${MONGO_ATLAS_URI:-mongodb+srv://localhost/db}"
-                    JWT_SECRET="${JENKINS_JWT_SECRET:-dev-secret-key}"
-                    GROQ_KEY="${JENKINS_GROQ_KEY:-dev-groq-key}"
-                    
-                    echo "   ✅ Credentials loaded from Jenkins environment"
-                    echo "   MONGO_URI: ${MONGO_URI:0:30}..."
-                    echo "   JWT_SECRET: ${JWT_SECRET:0:20}..."
-                    echo "   GROQ_API_KEY: ${GROQ_KEY:0:20}..."
+                    # Use environment variables from Jenkinsfile environment block
+                    echo "   ✅ Credentials loaded from Jenkinsfile environment"
+                    echo "   MONGO_URI: ${MONGO_ATLAS_URI:0:30}..."
+                    echo "   JWT_SECRET: ${JENKINS_JWT_SECRET:0:20}..."
+                    echo "   GROQ_API_KEY: ${JENKINS_GROQ_KEY:0:20}..."
                     
                     kubectl create secret generic mern-app-secrets \
-                      --from-literal=MONGO_URI="$MONGO_URI" \
-                      --from-literal=JWT_SECRET="$JWT_SECRET" \
-                      --from-literal=GROQ_API_KEY="$GROQ_KEY" \
+                      --from-literal=MONGO_URI="${MONGO_ATLAS_URI}" \
+                      --from-literal=JWT_SECRET="${JENKINS_JWT_SECRET}" \
+                      --from-literal=GROQ_API_KEY="${JENKINS_GROQ_KEY}" \
                       -n ${K8S_NAMESPACE} \
                       --dry-run=client -o yaml | kubectl apply -f -
                     
