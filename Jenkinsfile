@@ -167,40 +167,41 @@ pipeline {
 
         stage('Setup K8s Secrets') {
             steps {
-                sh '''
-                    echo "🔐 Creating Kubernetes secrets..."
-                    
-                    # Create namespace if not exists
-                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Load secrets from k8s/.env (these take priority)
-                    if [ -f "k8s/.env" ]; then
-                        echo "   📂 Loading secrets from k8s/.env..."
-                        set -a
-                        source k8s/.env
-                        set +a
-                    else
-                        echo "   ⚠️  k8s/.env not found, using Jenkins credentials/defaults"
-                    fi
-                    
-                    # Use environment variables (from Jenkins Credentials or .env) with fallback
-                    MONGO_URI="${MONGO_URI:-mongodb+srv://localhost/db}"
-                    JWT_SECRET="${JWT_SECRET:-dev-secret-key}"
-                    GROQ_API_KEY="${GROQ_API_KEY:-dev-groq-key}"
-                    
-                    echo "   MONGO_URI: ${MONGO_URI:0:30}..."
-                    echo "   JWT_SECRET: ${JWT_SECRET:0:20}..."
-                    echo "   GROQ_API_KEY: ${GROQ_API_KEY:0:20}..."
-                    
-                    kubectl create secret generic mern-app-secrets \
-                      --from-literal=MONGO_URI="$MONGO_URI" \
-                      --from-literal=JWT_SECRET="$JWT_SECRET" \
-                      --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
-                      -n ${K8S_NAMESPACE} \
-                      --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    echo "✅ Secrets configured"
-                '''
+                withCredentials([
+                    string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI'),
+                    string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET'),
+                    string(credentialsId: 'GROQ_API_KEY', variable: 'GROQ_API_KEY')
+                ]) {
+                    sh '''
+                        echo "🔐 Creating Kubernetes secrets..."
+                        
+                        # Create namespace if not exists
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Verify credentials were loaded
+                        if [ -z "$MONGO_URI" ] || [ -z "$JWT_SECRET" ] || [ -z "$GROQ_API_KEY" ]; then
+                            echo "   ⚠️  Using fallback defaults (Jenkins credentials not configured)"
+                            MONGO_URI="${MONGO_URI:-mongodb+srv://localhost/db}"
+                            JWT_SECRET="${JWT_SECRET:-dev-secret-key}"
+                            GROQ_API_KEY="${GROQ_API_KEY:-dev-groq-key}"
+                        else
+                            echo "   ✅ Jenkins credentials loaded successfully"
+                        fi
+                        
+                        echo "   MONGO_URI: ${MONGO_URI:0:30}..."
+                        echo "   JWT_SECRET: ${JWT_SECRET:0:20}..."
+                        echo "   GROQ_API_KEY: ${GROQ_API_KEY:0:20}..."
+                        
+                        kubectl create secret generic mern-app-secrets \
+                          --from-literal=MONGO_URI="$MONGO_URI" \
+                          --from-literal=JWT_SECRET="$JWT_SECRET" \
+                          --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
+                          -n ${K8S_NAMESPACE} \
+                          --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        echo "✅ Secrets configured"
+                    '''
+                }
             }
         }
 
