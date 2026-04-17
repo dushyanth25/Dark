@@ -10,7 +10,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
 
-        DOCKER_IMAGE = "your-dockerhub-username/mern-app"
+        DOCKER_IMAGE = "Dushyanth M/mern-app"
         IMAGE_TAG = "latest"
     }
 
