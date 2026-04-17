@@ -173,10 +173,17 @@ pipeline {
                     # Create namespace if not exists
                     kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                     
-                    # Create/update secrets from environment variables
-                    # In production, these should come from Jenkins Credentials Plugin
-                    # For now, use defaults if not set (development mode)
+                    # Load secrets from k8s/.env (these take priority)
+                    if [ -f "k8s/.env" ]; then
+                        echo "   📂 Loading secrets from k8s/.env..."
+                        set -a
+                        source k8s/.env
+                        set +a
+                    else
+                        echo "   ⚠️  k8s/.env not found, using Jenkins credentials/defaults"
+                    fi
                     
+                    # Use environment variables (from Jenkins Credentials or .env) with fallback
                     MONGO_URI="${MONGO_URI:-mongodb+srv://localhost/db}"
                     JWT_SECRET="${JWT_SECRET:-dev-secret-key}"
                     GROQ_API_KEY="${GROQ_API_KEY:-dev-groq-key}"
