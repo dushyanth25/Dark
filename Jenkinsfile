@@ -48,24 +48,20 @@ pipeline {
             }
         }
 
-        stage('Run Backend Tests + Coverage') {
+        stage('Run Tests + Coverage') {
             steps {
                 dir('server') {
-                    sh '''
-                        npm test -- --coverage --ci
-                    '''
+                    sh 'npm test -- --coverage --ci'
                 }
             }
         }
 
-        stage('Verify Coverage Output') {
+        stage('Trivy FS Scan') {
             steps {
-                dir('server') {
-                    sh '''
-                        ls -lah coverage || true
-                        cat coverage/lcov.info || true
-                    '''
-                }
+                sh '''
+                    echo "🔍 Running Trivy FS scan..."
+                    trivy fs server --exit-code 1 --severity HIGH,CRITICAL || true
+                '''
             }
         }
 
@@ -100,7 +96,6 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning workspace...'
             cleanWs()
         }
 
