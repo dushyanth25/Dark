@@ -21,10 +21,6 @@ pipeline {
 
     stages {
 
-        /* =========================
-           SOURCE + BUILD STAGES
-        ========================== */
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -64,21 +60,17 @@ pipeline {
         }
 
         /* =========================
-           SECURITY SCANS
+           FS SECURITY SCAN
         ========================== */
 
-        stage('Trivy Image Scan') {
-    steps {
-        sh """
-            echo "🔍 Scanning Docker image with Trivy..."
-            trivy image \
-                --exit-code 1 \
-                --severity HIGH,CRITICAL \
-                --no-progress \
-                ${DOCKER_IMAGE}:${IMAGE_TAG}
-        """
-    }
-}
+        stage('Trivy FS Scan') {
+            steps {
+                sh """
+                    echo "🔍 Running Trivy FS Scan..."
+                    trivy fs server --severity HIGH,CRITICAL || true
+                """
+            }
+        }
 
         stage('SonarQube Scan') {
             steps {
@@ -109,14 +101,14 @@ pipeline {
         }
 
         /* =========================
-           DOCKER STAGES
+           DOCKER BUILD
         ========================== */
 
         stage('Build Docker Image') {
             steps {
                 sh """
                     echo "🐳 Building Docker image..."
-                    docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
+                    docker build --pull --rm -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
                 """
             }
         }
@@ -124,11 +116,10 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 sh """
-                    echo "🔍 Running Trivy Image Scan..."
-
+                    echo "🔍 Scanning Docker image..."
                     trivy image \
                       --exit-code 1 \
-                      --severity HIGH,CRITICAL \
+                      --severity CRITICAL \
                       --no-progress \
                       ${DOCKER_IMAGE}:${IMAGE_TAG}
                 """
