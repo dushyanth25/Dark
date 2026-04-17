@@ -1,0 +1,115 @@
+pipeline {
+    agent any
+
+    tools {
+        nodejs 'node'
+    }
+
+    environment {
+        SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_PROJECT_KEY = 'mern-app'
+        SONAR_TOKEN = credentials('SONAR_TOKEN')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('server') {
+                    sh 'npm ci || npm install'
+                }
+            }
+        }
+
+        stage('Install Frontend Dependencies') {
+            steps {
+                dir('client') {
+                    sh 'npm ci || npm install'
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                dir('client') {
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Run Backend Tests + Coverage') {
+            steps {
+                dir('server') {
+                    sh '''
+                        npm test -- --coverage --ci
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Coverage Output') {
+            steps {
+                dir('server') {
+                    sh '''
+                        ls -lah coverage || true
+                        cat coverage/lcov.info || true
+                    '''
+                }
+            }
+        }
+
+        stage('SonarQube Scan') {
+            steps {
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+
+                    withSonarQubeEnv('sonar') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.sources=server,client \
+                            -Dsonar.javascript.lcov.reportPaths=server/coverage/lcov.info \
+                            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/** \
+                            -Dsonar.host.url=${SONAR_HOST_URL} \
+                            -Dsonar.login=${SONAR_TOKEN}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 3, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Cleaning workspace...'
+            cleanWs()
+        }
+
+        success {
+            echo '✅ CI Pipeline completed successfully!'
+        }
+
+        failure {
+            echo '❌ CI Pipeline failed!'
+        }
+    }
+}
