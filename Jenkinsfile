@@ -50,7 +50,7 @@ pipeline {
                 script {
                     def scannerHome = tool 'sonar-scanner'
                     withSonarQubeEnv('sonar') {
-                        sh '''
+                        sh """
                         ${scannerHome}/bin/sonar-scanner \
                         -Dsonar.projectKey=mern-app \
                         -Dsonar.sources=server,client \
@@ -58,7 +58,7 @@ pipeline {
                         -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/** \
                         -Dsonar.host.url=http://localhost:9000 \
                         -Dsonar.login=$SONAR_TOKEN
-                        '''
+                        """
                     }
                 }
             }
