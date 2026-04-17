@@ -167,31 +167,23 @@ pipeline {
 
         stage('Setup K8s Secrets') {
             steps {
-                script {
-                    // Secrets from Jenkins credentials (more secure than .env)
-                    withCredentials([
-                        string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI'),
-                        string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET'),
-                        string(credentialsId: 'GROQ_API_KEY', variable: 'GROQ_API_KEY')
-                    ]) {
-                        sh '''
-                            echo "🔐 Creating Kubernetes secrets from Jenkins credentials..."
-                            
-                            # Create namespace if not exists
-                            kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                            
-                            # Create/update secrets from Jenkins credentials (NOT from .env)
-                            kubectl create secret generic mern-app-secrets \
-                              --from-literal=MONGO_URI="$MONGO_URI" \
-                              --from-literal=JWT_SECRET="$JWT_SECRET" \
-                              --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
-                              -n ${K8S_NAMESPACE} \
-                              --dry-run=client -o yaml | kubectl apply -f -
-                            
-                            echo "✅ Secrets created successfully"
-                        '''
-                    }
-                }
+                sh '''
+                    echo "🔐 Creating Kubernetes secrets from k8s/.env file..."
+                    
+                    # Create namespace if not exists
+                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                    
+                    # Run setup-secrets.sh script (sources .env and creates/updates secrets)
+                    if [ -f "k8s/setup-secrets.sh" ]; then
+                        echo "📄 Running setup-secrets.sh..."
+                        bash k8s/setup-secrets.sh
+                    else
+                        echo "❌ setup-secrets.sh not found!"
+                        exit 1
+                    fi
+                    
+                    echo "✅ Secrets created successfully"
+                '''
             }
         }
 
