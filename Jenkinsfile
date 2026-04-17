@@ -11,14 +11,6 @@ pipeline {
         SONAR_TOKEN = credentials('sonar-token')
     }
 
-    stages {
-
-        stage('Checkout') {
-            steps {
-                git 'https://github.com/dushyanth25/Dark.git'
-            }
-        }
-
         stage('Install Backend') {
             steps {
                 dir('server') {
