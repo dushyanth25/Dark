@@ -3,8 +3,6 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: mern-app-hpa
   namespace: mern
-  labels:
-    app: mern-app
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

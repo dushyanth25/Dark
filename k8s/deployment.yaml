@@ -5,9 +5,9 @@ metadata:
   namespace: mern
   labels:
     app: mern-app
-    version: v1
 spec:
   replicas: 2
+  revisionHistoryLimit: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -20,40 +20,34 @@ spec:
     metadata:
       labels:
         app: mern-app
-        tier: backend
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "5000"
     spec:
-      serviceAccountName: mern-app
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
-      
+
       containers:
       - name: mern-app
-        # Image with versioned tag (NOT latest)
-        # Tag is replaced by Jenkins: dushyanth25/mern-app:${BUILD_NUMBER}
         image: dushyanth25/mern-app:latest
-        imagePullPolicy: IfNotPresent
-        
-        # Container port
+        imagePullPolicy: Always          # Always pull — critical for Minikube
+
         ports:
         - name: http
           containerPort: 5000
           protocol: TCP
-        
-        # Environment variables from ConfigMap
+
+        # Load non-secret config
         envFrom:
         - configMapRef:
             name: mern-app-config
-        
-        # Environment variables from Secret
+        # Load secrets
         - secretRef:
             name: mern-app-secrets
-        
-        # Additional environment variables (if needed)
+
+        # Downward API extras
         env:
         - name: POD_NAME
           valueFrom:
@@ -63,27 +57,27 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        
-        # Health checks
+
+        # Liveness: restart if app hangs
         livenessProbe:
           httpGet:
-            path: /
+            path: /api/health
             port: http
-          initialDelaySeconds: 30
-          periodSeconds: 10
+          initialDelaySeconds: 60       # Give app time to connect to MongoDB
+          periodSeconds: 15
           timeoutSeconds: 5
-          failureThreshold: 3
-        
+          failureThreshold: 5
+
+        # Readiness: only send traffic when truly ready
         readinessProbe:
           httpGet:
-            path: /
+            path: /api/health
             port: http
-          initialDelaySeconds: 10
-          periodSeconds: 5
+          initialDelaySeconds: 20
+          periodSeconds: 10
           timeoutSeconds: 3
           failureThreshold: 3
-        
-        # Resource management (adjust as needed)
+
         resources:
           requests:
             cpu: 100m
@@ -91,8 +85,7 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
-        
-        # Security context
+
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
@@ -101,8 +94,7 @@ spec:
           capabilities:
             drop:
             - ALL
-      
-      # Pod disruption budget for high availability
+
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -115,7 +107,6 @@ spec:
                   values:
                   - mern-app
               topologyKey: kubernetes.io/hostname
-      
-      # Restart policy
+
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
