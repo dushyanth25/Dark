@@ -10,8 +10,15 @@ pipeline {
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
 
-        DOCKER_IMAGE = "dushyanth25/mern-app"
-        IMAGE_TAG = "latest"
+        DOCKER_REGISTRY = "dushyanth25"
+        DOCKER_IMAGE_NAME = "mern-app"
+
+        // IMPORTANT: use versioned tag (NOT latest)
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${IMAGE_TAG}"
+
+        K8S_NAMESPACE = "mern"
+        K8S_DEPLOYMENT = "mern-app"
     }
 
     options {
@@ -59,16 +66,12 @@ pipeline {
             }
         }
 
-        /* =========================
-           FS SECURITY SCAN
-        ========================== */
-
         stage('Trivy FS Scan') {
             steps {
-                sh """
+                sh '''
                     echo "🔍 Running Trivy FS Scan..."
                     trivy fs server --severity HIGH,CRITICAL || true
-                """
+                '''
             }
         }
 
@@ -100,33 +103,29 @@ pipeline {
             }
         }
 
-        /* =========================
-           DOCKER BUILD
-        ========================== */
-
         stage('Build Docker Image') {
             steps {
                 sh """
                     echo "🐳 Building Docker image..."
-                    docker build --pull --rm -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
+                    docker build --pull --rm -t ${DOCKER_IMAGE} .
                 """
             }
         }
 
         stage('Trivy Image Scan') {
-    steps {
-        sh """
-            echo "🔍 Running Trivy Image Scan..."
+            steps {
+                sh """
+                    echo "🔍 Running Trivy Image Scan..."
 
-            trivy image \
-              --exit-code 1 \
-              --severity CRITICAL \
-              --ignore-unfixed \
-              --no-progress \
-              ${DOCKER_IMAGE}:${IMAGE_TAG}
-        """
-    }
-}
+                    trivy image \
+                      --exit-code 1 \
+                      --severity CRITICAL \
+                      --ignore-unfixed \
+                      --no-progress \
+                      ${DOCKER_IMAGE}
+                """
+            }
+        }
 
         stage('Login to Docker Hub') {
             steps {
@@ -146,23 +145,74 @@ pipeline {
             steps {
                 sh """
                     echo "📦 Pushing Docker image..."
-                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                    docker push ${DOCKER_IMAGE}
+                """
+            }
+        }
+
+        /* =========================
+           ☸️ KUBERNETES DEPLOYMENT
+        ========================== */
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh """
+                    echo "☸️ Deploying to Kubernetes..."
+
+                    # Ensure namespace exists
+                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                    # Apply K8s manifests
+                    kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
+                    kubectl apply -f k8s/secret.yaml -n ${K8S_NAMESPACE}
+                    kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
+                    kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
+
+                    # Update image in deployment
+                    kubectl set image deployment/${K8S_DEPLOYMENT} \
+                      ${K8S_DEPLOYMENT}=${DOCKER_IMAGE} \
+                      -n ${K8S_NAMESPACE}
+                """
+            }
+        }
+
+        stage('Wait for Rollout') {
+            steps {
+                sh """
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                    -n ${K8S_NAMESPACE} --timeout=5m
+                """
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh """
+                    echo "📊 Pods:"
+                    kubectl get pods -n ${K8S_NAMESPACE}
+
+                    echo "🌐 Services:"
+                    kubectl get svc -n ${K8S_NAMESPACE}
                 """
             }
         }
     }
 
     post {
-        always {
-            cleanWs()
-        }
-
         success {
-            echo '✅ CI/CD Pipeline completed successfully!'
+            echo "✅ CI/CD Pipeline completed successfully!"
         }
 
         failure {
-            echo '❌ Pipeline failed!'
+            echo "❌ Pipeline failed! Rolling back..."
+
+            sh """
+                kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+            """
+        }
+
+        always {
+            cleanWs()
         }
     }
 }
