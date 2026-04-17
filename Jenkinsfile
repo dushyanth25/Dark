@@ -13,12 +13,6 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
         stage('Install Backend') {
             steps {
                 dir('server') {
