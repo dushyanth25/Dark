@@ -38,9 +38,6 @@ pipeline {
 
     stages {
 
-        /* =========================
-           CHECKOUT
-        ========================== */
         stage('Checkout') {
             steps {
                 checkout scm
@@ -48,9 +45,9 @@ pipeline {
         }
 
         /* =========================
-           INSTALL DEPENDENCIES
+           INSTALL + BUILD
         ========================== */
-        stage('Install Backend Dependencies') {
+        stage('Install Backend') {
             steps {
                 dir('server') {
                     sh 'npm ci || npm install'
@@ -58,7 +55,7 @@ pipeline {
             }
         }
 
-        stage('Install Frontend Dependencies') {
+        stage('Install Frontend') {
             steps {
                 dir('client') {
                     sh 'npm ci || npm install'
@@ -109,20 +106,18 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 3, unit: 'MINUTES') {
+                timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
         /* =========================
-           DOCKER BUILD
+           DOCKER
         ========================== */
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build --pull --rm -t ${DOCKER_IMAGE} .
-                """
+                sh "docker build --pull --rm -t ${DOCKER_IMAGE} ."
             }
         }
 
@@ -139,7 +134,7 @@ pipeline {
             }
         }
 
-        stage('Login to Docker Hub') {
+        stage('Docker Login') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
@@ -153,7 +148,7 @@ pipeline {
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push Image') {
             steps {
                 sh "docker push ${DOCKER_IMAGE}"
             }
@@ -169,8 +164,6 @@ pipeline {
 
                     echo "☸️ Deploying to Kubernetes..."
 
-                    kubectl config current-context
-
                     kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
                     kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
@@ -184,7 +177,7 @@ pipeline {
             }
         }
 
-        stage('Wait for Rollout') {
+        stage('Rollout Status') {
             steps {
                 sh """
                     kubectl rollout status deployment/${K8S_DEPLOYMENT} \
@@ -193,19 +186,11 @@ pipeline {
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify') {
             steps {
                 sh """
                     kubectl get pods -n ${K8S_NAMESPACE}
                     kubectl get svc -n ${K8S_NAMESPACE}
-                """
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh """
-                    kubectl get pods -n ${K8S_NAMESPACE}
                 """
             }
         }
@@ -218,11 +203,15 @@ pipeline {
         }
 
         failure {
-            echo "❌ Pipeline failed — rolling back deployment..."
+            echo "❌ Pipeline failed — checking rollback..."
 
             sh """
-                kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                if kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
+                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                else
+                    echo "⚠️ No deployment found — skipping rollback"
+                fi
             """
         }
 
