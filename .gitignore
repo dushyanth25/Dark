@@ -67,6 +67,9 @@ server/.env.*.local
 *.key
 .npmrc
 .yarnrc
+# Kubernetes secrets (NEVER commit real secrets!)
+k8s/.env
+k8s/.env.*
 
 # ============================================================================
 # IDE & Editor Files
