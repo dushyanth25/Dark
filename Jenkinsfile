@@ -168,21 +168,31 @@ pipeline {
         stage('Setup K8s Secrets') {
             steps {
                 sh '''
-                    echo "🔐 Creating Kubernetes secrets from k8s/.env file..."
+                    echo "🔐 Creating Kubernetes secrets..."
                     
                     # Create namespace if not exists
                     kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                     
-                    # Run setup-secrets.sh script (sources .env and creates/updates secrets)
-                    if [ -f "k8s/setup-secrets.sh" ]; then
-                        echo "📄 Running setup-secrets.sh..."
-                        bash k8s/setup-secrets.sh
-                    else
-                        echo "❌ setup-secrets.sh not found!"
-                        exit 1
-                    fi
+                    # Create/update secrets from environment variables
+                    # In production, these should come from Jenkins Credentials Plugin
+                    # For now, use defaults if not set (development mode)
                     
-                    echo "✅ Secrets created successfully"
+                    MONGO_URI="${MONGO_URI:-mongodb+srv://localhost/db}"
+                    JWT_SECRET="${JWT_SECRET:-dev-secret-key}"
+                    GROQ_API_KEY="${GROQ_API_KEY:-dev-groq-key}"
+                    
+                    echo "   MONGO_URI: ${MONGO_URI:0:30}..."
+                    echo "   JWT_SECRET: ${JWT_SECRET:0:20}..."
+                    echo "   GROQ_API_KEY: ${GROQ_API_KEY:0:20}..."
+                    
+                    kubectl create secret generic mern-app-secrets \
+                      --from-literal=MONGO_URI="$MONGO_URI" \
+                      --from-literal=JWT_SECRET="$JWT_SECRET" \
+                      --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
+                      -n ${K8S_NAMESPACE} \
+                      --dry-run=client -o yaml | kubectl apply -f -
+                    
+                    echo "✅ Secrets configured"
                 '''
             }
         }
