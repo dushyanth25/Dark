@@ -10,9 +10,14 @@ pipeline {
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
 
-        DOCKER_IMAGE = "dushyanth25/mern-app"
-        IMAGE_TAG = "latest"
+        // Docker image with versioned tag (NOT latest)
+        DOCKER_REGISTRY = "dushyanth25"
+        DOCKER_IMAGE_NAME = "mern-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${IMAGE_TAG}"
+        DOCKER_LATEST = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:latest"
 
+        // Kubernetes
         K8S_NAMESPACE = "mern"
         K8S_DEPLOYMENT = "mern-app"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
@@ -112,7 +117,8 @@ pipeline {
             steps {
                 sh """
                     echo "🐳 Building Docker image..."
-                    docker build --pull --rm -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
+                    docker build --pull --rm -t ${DOCKER_IMAGE} .
+                    docker tag ${DOCKER_IMAGE} ${DOCKER_LATEST}
                 """
             }
         }
@@ -126,7 +132,7 @@ pipeline {
                       --severity CRITICAL \
                       --ignore-unfixed \
                       --no-progress \
-                      ${DOCKER_IMAGE}:${IMAGE_TAG}
+                      ${DOCKER_IMAGE}
                 """
             }
         }
@@ -148,8 +154,9 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 sh """
-                    echo "📦 Pushing Docker image..."
-                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                    echo "📦 Pushing Docker image with tag ${IMAGE_TAG}..."
+                    docker push ${DOCKER_IMAGE}
+                    docker push ${DOCKER_LATEST}
                 """
             }
         }
@@ -158,34 +165,104 @@ pipeline {
            ☸️ KUBERNETES DEPLOYMENT
         ========================== */
 
-        stage('Deploy to Kubernetes') {
+        stage('Setup K8s Secrets') {
+            steps {
+                script {
+                    // Secrets from Jenkins credentials (more secure than .env)
+                    withCredentials([
+                        string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI'),
+                        string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET'),
+                        string(credentialsId: 'GROQ_API_KEY', variable: 'GROQ_API_KEY')
+                    ]) {
+                        sh '''
+                            echo "🔐 Creating Kubernetes secrets from Jenkins credentials..."
+                            
+                            # Create namespace if not exists
+                            kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            # Create/update secrets from Jenkins credentials (NOT from .env)
+                            kubectl create secret generic mern-app-secrets \
+                              --from-literal=MONGO_URI="$MONGO_URI" \
+                              --from-literal=JWT_SECRET="$JWT_SECRET" \
+                              --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
+                              -n ${K8S_NAMESPACE} \
+                              --dry-run=client -o yaml | kubectl apply -f -
+                            
+                            echo "✅ Secrets created successfully"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Setup K8s RBAC & Namespace') {
+            steps {
+                sh """
+                    echo "☸️ Setting up Kubernetes RBAC and namespace..."
+                    
+                    # Apply namespace
+                    kubectl apply -f k8s/namespace.yaml
+                    
+                    # Apply ServiceAccount with RBAC (CRITICAL - must be before deployment)
+                    kubectl apply -f k8s/serviceaccount.yaml -n ${K8S_NAMESPACE}
+                    
+                    # Wait for ServiceAccount to be created
+                    sleep 2
+                    
+                    echo "✅ RBAC and ServiceAccount configured"
+                """
+            }
+        }
+
+        stage('Deploy K8s Manifests') {
             steps {
                 sh """
                     set -e
-                    echo "☸️ Checking cluster access..."
+                    echo "☸️ Deploying Kubernetes manifests..."
+                    
+                    # Verify cluster access
+                    echo "📊 Checking cluster access..."
                     kubectl cluster-info
                     kubectl get nodes
-
-                    echo "📦 Ensuring namespace exists..."
-                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-
+                    
+                    # Apply ConfigMap (non-sensitive env vars)
                     echo "📄 Applying ConfigMap..."
                     kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
-
+                    
+                    # Apply HPA
+                    echo "📄 Applying HorizontalPodAutoscaler..."
+                    kubectl apply -f k8s/hpa.yaml -n ${K8S_NAMESPACE}
+                    
+                    # Apply Deployment (will use secrets created in previous stage)
                     echo "📄 Applying Deployment..."
                     kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
-
+                    
+                    # Apply Service
                     echo "📄 Applying Service..."
                     kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
+                    
+                    echo "✅ Manifests deployed"
+                """
+            }
+        }
 
-                    echo "🚀 Updating image..."
+        stage('Update Image & Rollout') {
+            steps {
+                sh """
+                    echo "🚀 Updating deployment image to ${DOCKER_IMAGE}..."
+                    
+                    # Update image using versioned tag (NOT latest)
                     kubectl set image deployment/${K8S_DEPLOYMENT} \
-                        ${K8S_DEPLOYMENT}=${DOCKER_IMAGE}:${IMAGE_TAG} \
-                        -n ${K8S_NAMESPACE}
-
-                    echo "⏳ Waiting for rollout..."
+                        ${K8S_DEPLOYMENT}=${DOCKER_IMAGE} \
+                        -n ${K8S_NAMESPACE} \
+                        --record
+                    
+                    echo "⏳ Waiting for rollout to complete (timeout: 5m)..."
                     kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE} --timeout=5m
+                        -n ${K8S_NAMESPACE} \
+                        --timeout=5m
+                    
+                    echo "✅ Rollout completed successfully"
                 """
             }
         }
@@ -193,9 +270,25 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh """
-                    echo "✅ Verifying deployment..."
-                    kubectl get pods -n ${K8S_NAMESPACE}
+                    echo "✅ Verifying Kubernetes deployment..."
+                    echo ""
+                    echo "=== Deployment Status ==="
+                    kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                    
+                    echo ""
+                    echo "=== Pod Status ==="
+                    kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
+                    
+                    echo ""
+                    echo "=== Service Status ==="
                     kubectl get svc -n ${K8S_NAMESPACE}
+                    
+                    echo ""
+                    echo "=== Recent Logs ==="
+                    kubectl logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --tail=20 --all-containers=true || true
+                    
+                    echo ""
+                    echo "✅ All resources verified"
                 """
             }
         }
@@ -208,19 +301,53 @@ pipeline {
 
         success {
             echo '✅ CI/CD Pipeline completed successfully!'
+            sh '''
+                echo ""
+                echo "=========================================="
+                echo "✅ Deployment Successful"
+                echo "=========================================="
+                echo "Image: ${DOCKER_IMAGE}"
+                echo "Namespace: ${K8S_NAMESPACE}"
+                echo "Deployment: ${K8S_DEPLOYMENT}"
+                echo ""
+                echo "To access your application:"
+                echo "  kubectl port-forward svc/${K8S_DEPLOYMENT}-service 8080:80 -n ${K8S_NAMESPACE}"
+                echo "  then visit: http://localhost:8080"
+                echo "=========================================="
+            '''
         }
 
         failure {
-            echo '❌ Pipeline failed — checking rollback...'
-            sh """
+            echo '❌ Pipeline failed!'
+            sh '''
+                set +e
+                echo ""
+                echo "=========================================="
+                echo "❌ Checking Deployment Status..."
+                echo "=========================================="
+                
+                kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
+                
+                echo ""
+                echo "=== Recent Errors ==="
+                kubectl describe pod -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
+                
+                echo ""
+                echo "=== Pod Logs ==="
+                kubectl logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --tail=50 --all-containers=true || true
+                
+                echo ""
+                echo "Attempting rollback..."
                 if kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
-                    echo "↩️ Rolling back deployment..."
-                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
-                    kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
+                    echo "↩️ Rolling back to previous version..."
+                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=5m
+                    echo "✅ Rollback completed"
                 else
-                    echo "⚠️ Deployment not created yet — skipping rollback"
+                    echo "⚠️ Deployment not found - skipping rollback"
                 fi
-            """
+                echo "=========================================="
+            '''
         }
     }
 }
