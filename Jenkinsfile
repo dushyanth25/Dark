@@ -6,12 +6,18 @@ pipeline {
     }
 
     environment {
-        SONAR_HOST_URL = 'http://host.docker.internal:9000'
+        SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('sonar-token')
     }
 
     stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
 
         stage('Install Backend') {
             steps {
@@ -53,17 +59,29 @@ pipeline {
 
         stage('SonarQube Scan') {
             steps {
-                withSonarQubeEnv('sonar') {
-                    sh '''
-                    sonar-scanner \
-                    -Dsonar.projectKey=mern-app \
-                    -Dsonar.sources=. \
-                    -Dsonar.host.url=$SONAR_HOST_URL \
-                    -Dsonar.login=$SONAR_TOKEN
-                    '''
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+                    withSonarQubeEnv('sonar') {
+                        sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.login=${SONAR_TOKEN}
+                        """
+                    }
                 }
             }
         }
 
+    }
+
+    post {
+        success {
+            echo '✅ CI Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ CI Pipeline failed!'
+        }
     }
 }
