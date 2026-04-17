@@ -286,4 +286,11 @@ function startSimulation() {
   simulationInterval = setInterval(runSimulationTick, 2000);
 }
 
-module.exports = { startSimulation };
+function stopSimulation() {
+  if (simulationInterval) {
+    clearInterval(simulationInterval);
+    simulationInterval = null;
+  }
+}
+
+module.exports = { startSimulation, stopSimulation, runSimulationTick };

@@ -19,7 +19,7 @@ function triggerVoice(insightObj, playerState) {
   const rankImproved = playerInsight && playerInsight.rankImproved;
   
   // Coaching checks
-  const highConfidenceCoaching = coachingAdvice && coachingAdvice.confidence > 0.7;
+  const highConfidenceCoaching = coachingAdvice && coachingAdvice.confidence >= 0.7;
 
   // New Voice Triggers logic
   const shouldSpeak = isHighPriority || isMajorMarketEvent || tierChanged || rankImproved || highConfidenceCoaching;

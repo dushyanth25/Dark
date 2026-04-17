@@ -72,8 +72,13 @@ router.get('/history', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50)
       .populate('agentId', 'type');
+    
+    const formattedOrders = orders.map(order => ({
+      ...order.toObject ? order.toObject() : order,
+      createdAt: new Date(order.createdAt)
+    }));
       
-    res.json(orders);
+    res.status(200).json(formattedOrders);
   } catch (err) {
     console.error('Error fetching history:', err);
     res.status(500).json({ message: 'Server error' });
