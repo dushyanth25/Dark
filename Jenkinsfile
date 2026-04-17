@@ -21,6 +21,10 @@ pipeline {
 
     stages {
 
+        /* =========================
+           SOURCE + BUILD STAGES
+        ========================== */
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -59,11 +63,17 @@ pipeline {
             }
         }
 
+        /* =========================
+           SECURITY SCANS
+        ========================== */
+
         stage('Trivy FS Scan') {
             steps {
                 sh '''
-                    echo "🔍 Running Trivy FS scan..."
-                    trivy fs server --exit-code 1 --severity HIGH,CRITICAL || true
+                    echo "🔍 Running Trivy FS Scan..."
+                    trivy fs server \
+                      --exit-code 1 \
+                      --severity HIGH,CRITICAL
                 '''
             }
         }
@@ -97,7 +107,7 @@ pipeline {
         }
 
         /* =========================
-           DOCKER BUILD STAGES
+           DOCKER STAGES
         ========================== */
 
         stage('Build Docker Image') {
@@ -112,8 +122,13 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 sh """
-                    echo "🔍 Scanning Docker image with Trivy..."
-                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${DOCKER_IMAGE}:${IMAGE_TAG} || true
+                    echo "🔍 Running Trivy Image Scan..."
+
+                    trivy image \
+                      --exit-code 1 \
+                      --severity HIGH,CRITICAL \
+                      --no-progress \
+                      ${DOCKER_IMAGE}:${IMAGE_TAG}
                 """
             }
         }
@@ -135,6 +150,7 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 sh """
+                    echo "📦 Pushing Docker image..."
                     docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
                 """
             }
