@@ -1,0 +1,275 @@
+version: '3.8'
+
+# ============================================================================
+# Docker Compose Configuration for MERN CI/CD Pipeline
+# ============================================================================
+# Services:
+# - Jenkins (CI/CD orchestration) - Port 8080
+# - SonarQube (Code quality analysis) - Port 9000
+#
+# Usage:
+#   docker-compose up -d        # Start all services
+#   docker-compose down         # Stop all services
+#   docker-compose logs -f      # View logs
+#   docker-compose ps          # View status
+# ============================================================================
+
+services:
+  # ========================================================================
+  # Jenkins - CI/CD Pipeline Orchestration
+  # ========================================================================
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    
+    # Exposed Ports
+    ports:
+      - "8080:8080"        # Jenkins Web UI
+      - "50000:50000"      # Jenkins Agent Communication
+    
+    # Volume Mounts for Persistence
+    volumes:
+      - jenkins_home:/var/jenkins_home     # Jenkins configuration and data
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for DinD
+    
+    # Environment Variables
+    environment:
+      - JENKINS_OPTS=--httpPort=8080
+      - JAVA_OPTS=-Xmx1024m -Xms512m      # Heap size optimization
+    
+    # Network Configuration
+    networks:
+      - ci_network
+    
+    # Restart Policy
+    restart: unless-stopped
+    
+    # Resource Limits (optional, uncomment to limit resources)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 1G
+    
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    
+    # Logging Configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # ========================================================================
+  # SonarQube - Code Quality and Security Analysis
+  # ========================================================================
+  sonarqube:
+    image: sonarqube:latest
+    container_name: sonarqube
+    
+    # Exposed Ports
+    ports:
+      - "9000:9000"        # SonarQube Web UI
+      - "9092:9092"        # SonarQube Web Service (internal)
+    
+    # Volume Mounts for Data Persistence
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data           # Database data
+      - sonarqube_logs:/opt/sonarqube/logs           # Application logs
+      - sonarqube_extensions:/opt/sonarqube/extensions  # Plugins
+    
+    # Environment Variables
+    environment:
+      # Java Options for Memory
+      - sonar.web.javaAdditionalOpts=-Xmx1024m -Xms512m
+      
+      # Database Configuration (default: embedded H2)
+      - sonar.jdbc.username=sonar
+      - sonar.jdbc.password=sonar
+      
+      # Security Passphrase
+      - sonar.web.systemPasscode=admin
+      
+      # Email Configuration (optional)
+      # - sonar.notify.dialogs.frequency=PT4H
+      # - sonar.core.serverBaseURL=http://localhost:9000
+    
+    # Network Configuration
+    networks:
+      - ci_network
+    
+    # Restart Policy
+    restart: unless-stopped
+    
+    # Depends On (ensure startup order)
+    depends_on:
+      - jenkins
+    
+    # Resource Limits (optional, uncomment to limit resources)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 1G
+    
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s  # SonarQube takes longer to start
+    
+    # Logging Configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+# ============================================================================
+# Named Volumes
+# ============================================================================
+# Named volumes allow data persistence across container restarts
+volumes:
+  # Jenkins Home Directory
+  # Contains: configs, plugins, job definitions, build history
+  jenkins_home:
+    driver: local
+
+  # SonarQube Data Directory
+  # Contains: database, indexes, metrics
+  sonarqube_data:
+    driver: local
+
+  # SonarQube Logs Directory
+  # Contains: application and system logs
+  sonarqube_logs:
+    driver: local
+
+  # SonarQube Extensions Directory
+  # Contains: installed plugins
+  sonarqube_extensions:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+# Custom bridge network allows services to communicate by name
+networks:
+  ci_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================================================
+# Usage Instructions
+# ============================================================================
+#
+# Start all services:
+#   docker-compose up -d
+#
+# Start with logs:
+#   docker-compose up
+#
+# Stop all services:
+#   docker-compose down
+#
+# Stop and remove volumes (WARNING: deletes all data):
+#   docker-compose down -v
+#
+# View running services:
+#   docker-compose ps
+#
+# View logs:
+#   docker-compose logs -f              # All services
+#   docker-compose logs -f jenkins      # Jenkins only
+#   docker-compose logs -f sonarqube    # SonarQube only
+#
+# Shell into container:
+#   docker-compose exec jenkins bash
+#   docker-compose exec sonarqube bash
+#
+# Restart service:
+#   docker-compose restart jenkins
+#   docker-compose restart sonarqube
+#
+# View environment:
+#   docker-compose config
+#
+# Check service health:
+#   docker-compose ps
+#   docker inspect <container_name> | grep -A 10 "HealthStatus"
+#
+# ============================================================================
+# Default Credentials
+# ============================================================================
+#
+# Jenkins:
+#   URL: http://localhost:8080
+#   Initial password: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+#
+# SonarQube:
+#   URL: http://localhost:9000
+#   Username: admin
+#   Password: admin
+#
+# ============================================================================
+# Advanced Configuration
+# ============================================================================
+#
+# To use external PostgreSQL database for SonarQube:
+#
+#   1. Add PostgreSQL service to compose file
+#   2. Update SonarQube environment variables:
+#      - sonar.jdbc.url=jdbc:postgresql://postgres:5432/sonarqube
+#      - sonar.jdbc.username=sonarqube
+#      - sonar.jdbc.password=sonarqube
+#
+# For production, consider:
+#   - Using external database instead of embedded DB
+#   - Setting up reverse proxy (Nginx/Apache)
+#   - Configuring SSL/TLS certificates
+#   - Setting up automated backups
+#   - Implementing container orchestration (Kubernetes)
+#   - Setting resource limits
+#   - Configuring logging aggregation
+#
+# ============================================================================
+# Troubleshooting
+# ============================================================================
+#
+# SonarQube takes too long to start:
+#   - Normal behavior for first startup (1-2 minutes)
+#   - Check logs: docker-compose logs sonarqube
+#   - Ensure sufficient disk space and memory
+#
+# Cannot connect to services:
+#   - Verify containers are running: docker-compose ps
+#   - Check port availability: netstat -tuln | grep 8080
+#   - Check network connectivity: docker-compose exec jenkins curl http://sonarqube:9000
+#
+# Volume permission issues:
+#   - Check ownership: sudo chown -R 1000:1000 jenkins_home
+#   - For SonarQube: sudo chown -R 999:999 sonarqube_*
+#
+# Out of disk space:
+#   - Clean Docker: docker system prune
+#   - Remove unused volumes: docker volume prune
+#
+# ============================================================================
+# EOF - docker-compose.yml
+# ============================================================================
