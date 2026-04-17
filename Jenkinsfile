@@ -11,6 +11,8 @@ pipeline {
         SONAR_TOKEN = credentials('sonar-token')
     }
 
+    stages {
+
         stage('Install Backend') {
             steps {
                 dir('server') {
@@ -62,5 +64,6 @@ pipeline {
                 }
             }
         }
-    }
 
+    }
+}
