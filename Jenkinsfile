@@ -67,16 +67,18 @@ pipeline {
            SECURITY SCANS
         ========================== */
 
-        stage('Trivy FS Scan') {
-            steps {
-                sh '''
-                    echo "🔍 Running Trivy FS Scan..."
-                    trivy fs server \
-                      --exit-code 1 \
-                      --severity HIGH,CRITICAL
-                '''
-            }
-        }
+        stage('Trivy Image Scan') {
+    steps {
+        sh """
+            echo "🔍 Scanning Docker image with Trivy..."
+            trivy image \
+                --exit-code 1 \
+                --severity HIGH,CRITICAL \
+                --no-progress \
+                ${DOCKER_IMAGE}:${IMAGE_TAG}
+        """
+    }
+}
 
         stage('SonarQube Scan') {
             steps {
