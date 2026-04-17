@@ -9,6 +9,9 @@ pipeline {
         SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
+
+        DOCKER_IMAGE = "your-dockerhub-username/mern-app"
+        IMAGE_TAG = "latest"
     }
 
     options {
@@ -92,6 +95,50 @@ pipeline {
                 }
             }
         }
+
+        /* =========================
+           DOCKER BUILD STAGES
+        ========================== */
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                    echo "🐳 Building Docker image..."
+                    docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
+                """
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh """
+                    echo "🔍 Scanning Docker image with Trivy..."
+                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${DOCKER_IMAGE}:${IMAGE_TAG} || true
+                """
+            }
+        }
+
+        stage('Login to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                sh """
+                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                """
+            }
+        }
     }
 
     post {
@@ -100,11 +147,11 @@ pipeline {
         }
 
         success {
-            echo '✅ CI Pipeline completed successfully!'
+            echo '✅ CI/CD Pipeline completed successfully!'
         }
 
         failure {
-            echo '❌ CI Pipeline failed!'
+            echo '❌ Pipeline failed!'
         }
     }
 }
