@@ -12,6 +12,10 @@ pipeline {
 
         DOCKER_IMAGE = "dushyanth25/mern-app"
         IMAGE_TAG = "latest"
+
+        K8S_NAMESPACE = "mern"
+        K8S_DEPLOYMENT = "mern-app"
+        KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
 
     options {
@@ -114,19 +118,18 @@ pipeline {
         }
 
         stage('Trivy Image Scan') {
-    steps {
-        sh """
-            echo "🔍 Running Trivy Image Scan..."
-
-            trivy image \
-              --exit-code 1 \
-              --severity CRITICAL \
-              --ignore-unfixed \
-              --no-progress \
-              ${DOCKER_IMAGE}:${IMAGE_TAG}
-        """
-    }
-}
+            steps {
+                sh """
+                    echo "🔍 Running Trivy Image Scan..."
+                    trivy image \
+                      --exit-code 1 \
+                      --severity CRITICAL \
+                      --ignore-unfixed \
+                      --no-progress \
+                      ${DOCKER_IMAGE}:${IMAGE_TAG}
+                """
+            }
+        }
 
         stage('Login to Docker Hub') {
             steps {
@@ -150,6 +153,52 @@ pipeline {
                 """
             }
         }
+
+        /* =========================
+           ☸️ KUBERNETES DEPLOYMENT
+        ========================== */
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh """
+                    set -e
+                    echo "☸️ Checking cluster access..."
+                    kubectl cluster-info
+                    kubectl get nodes
+
+                    echo "📦 Ensuring namespace exists..."
+                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                    echo "📄 Applying ConfigMap..."
+                    kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
+
+                    echo "📄 Applying Deployment..."
+                    kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
+
+                    echo "📄 Applying Service..."
+                    kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
+
+                    echo "🚀 Updating image..."
+                    kubectl set image deployment/${K8S_DEPLOYMENT} \
+                        ${K8S_DEPLOYMENT}=${DOCKER_IMAGE}:${IMAGE_TAG} \
+                        -n ${K8S_NAMESPACE}
+
+                    echo "⏳ Waiting for rollout..."
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                        -n ${K8S_NAMESPACE} --timeout=5m
+                """
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh """
+                    echo "✅ Verifying deployment..."
+                    kubectl get pods -n ${K8S_NAMESPACE}
+                    kubectl get svc -n ${K8S_NAMESPACE}
+                """
+            }
+        }
     }
 
     post {
@@ -162,7 +211,16 @@ pipeline {
         }
 
         failure {
-            echo '❌ Pipeline failed!'
+            echo '❌ Pipeline failed — checking rollback...'
+            sh """
+                if kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
+                    echo "↩️ Rolling back deployment..."
+                    kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
+                    kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
+                else
+                    echo "⚠️ Deployment not created yet — skipping rollback"
+                fi
+            """
         }
     }
 }
