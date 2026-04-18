@@ -31,7 +31,7 @@ spec:
 
       containers:
       - name: mern-app
-        image: dushyanth25/mern-app:53
+        image: dushyanth25/mern-app:57
         imagePullPolicy: Always          # Always pull — critical for Minikube
 
         ports:
