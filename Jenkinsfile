@@ -10,20 +10,17 @@ pipeline {
         SONAR_PROJECT_KEY = 'mern-app'
         SONAR_TOKEN = credentials('SONAR_TOKEN')
 
-        // Docker image with versioned tag (NOT latest)
         DOCKER_REGISTRY = "dushyanth25"
         DOCKER_IMAGE_NAME = "mern-app"
         IMAGE_TAG = "${BUILD_NUMBER}"
         DOCKER_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${IMAGE_TAG}"
         DOCKER_LATEST = "${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:latest"
 
-        // Kubernetes
         K8S_NAMESPACE = "mern"
         K8S_DEPLOYMENT = "mern-app"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
-        
-        // ⚠️ DEV ONLY: MongoDB Atlas & API Credentials
-        // TODO: Move to Jenkins Credentials Plugin for production
+
+        // ⚠️ DEV ONLY
         MONGO_ATLAS_URI = "mongodb+srv://dushyanth520:904918@cluster0.kag8m76.mongodb.net/batman_auth?retryWrites=true&w=majority&appName=Cluster0"
         JENKINS_JWT_SECRET = "batman_dark_knight_secret_key_2024"
         JENKINS_GROQ_KEY = "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"
@@ -38,7 +35,14 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                checkout scm
+                script {
+                    checkout scm
+                    def commitMsg = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    if (commitMsg.contains('[skip ci]')) {
+                        currentBuild.result = 'NOT_BUILT'
+                        error('Skipping — image tag commit from Jenkins')
+                    }
+                }
             }
         }
 
@@ -74,10 +78,6 @@ pipeline {
             }
         }
 
-        /* =========================
-           FS SECURITY SCAN
-        ========================== */
-
         stage('Trivy FS Scan') {
             steps {
                 sh """
@@ -91,7 +91,6 @@ pipeline {
             steps {
                 script {
                     def scannerHome = tool 'sonar-scanner'
-
                     withSonarQubeEnv('sonar') {
                         sh """
                             ${scannerHome}/bin/sonar-scanner \
@@ -114,10 +113,6 @@ pipeline {
                 }
             }
         }
-
-        /* =========================
-           DOCKER BUILD
-        ========================== */
 
         stage('Build Docker Image') {
             steps {
@@ -168,213 +163,53 @@ pipeline {
         }
 
         /* =========================
-           ☸️ KUBERNETES DEPLOYMENT
+           🚀 ARGO CD GitOps DEPLOY
         ========================== */
 
-        stage('Setup K8s Secrets') {
+        stage('Update Image Tag in Git') {
             steps {
-                sh '''
-                    echo "🔐 Creating Kubernetes secrets..."
-                    
-                    # Create namespace if not exists
-                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Use environment variables from Jenkinsfile environment block
-                    echo "   ✅ Credentials loaded from Jenkinsfile environment"
-                    echo "   MONGO_URI: ${MONGO_ATLAS_URI:0:30}..."
-                    echo "   JWT_SECRET: ${JENKINS_JWT_SECRET:0:20}..."
-                    echo "   GROQ_API_KEY: ${JENKINS_GROQ_KEY:0:20}..."
-                    
-                    kubectl create secret generic mern-app-secrets \
-                      --from-literal=MONGO_URI="${MONGO_ATLAS_URI}" \
-                      --from-literal=JWT_SECRET="${JENKINS_JWT_SECRET}" \
-                      --from-literal=GROQ_API_KEY="${JENKINS_GROQ_KEY}" \
-                      -n ${K8S_NAMESPACE} \
-                      --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    echo "✅ Secrets configured"
-                '''
-            }
-        }
+                withCredentials([usernamePassword(
+                    credentialsId: 'github-token',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN'
+                )]) {
+                    sh """
+                        echo "📝 Updating image tag to ${IMAGE_TAG} in k8s/deployment.yaml..."
 
-        stage('Setup K8s RBAC & Namespace') {
-            steps {
-                sh """
-                    echo "☸️ Setting up Kubernetes RBAC and namespace..."
-                    
-                    # Apply namespace
-                    kubectl apply -f k8s/namespace.yaml
-                    
-                    # Apply ServiceAccount with RBAC (CRITICAL - must be before deployment)
-                    kubectl apply -f k8s/serviceaccount.yaml -n ${K8S_NAMESPACE}
-                    
-                    # Wait for ServiceAccount to be created
-                    sleep 2
-                    
-                    echo "✅ RBAC and ServiceAccount configured"
-                """
-            }
-        }
+                        git config user.email "jenkins@ci.local"
+                        git config user.name "Jenkins CI"
 
-        stage('Deploy K8s Manifests') {
-            steps {
-                sh """
-                    set -e
-                    echo "☸️ Deploying Kubernetes manifests..."
-                    
-                    # Verify cluster access
-                    echo "📊 Checking cluster access..."
-                    kubectl cluster-info
-                    kubectl get nodes
-                    
-                    # Apply ConfigMap (non-sensitive env vars)
-                    echo "📄 Applying ConfigMap..."
-                    kubectl apply -f k8s/configmap.yaml -n ${K8S_NAMESPACE}
-                    
-                    # Apply HPA
-                    echo "📄 Applying HorizontalPodAutoscaler..."
-                    kubectl apply -f k8s/hpa.yaml -n ${K8S_NAMESPACE}
-                    
-                    # Apply Deployment (will use secrets created in previous stage)
-                    echo "📄 Applying Deployment..."
-                    kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
-                    
-                    # Apply Service
-                    echo "📄 Applying Service..."
-                    kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
-                    
-                    echo "✅ Manifests deployed"
-                """
-            }
-        }
+                        sed -i 's|image: dushyanth25/mern-app:.*|image: dushyanth25/mern-app:${IMAGE_TAG}|g' k8s/deployment.yaml
 
-        stage('Update Image & Rollout') {
-            steps {
-                sh """
-                    echo "🚀 Updating deployment image to ${DOCKER_IMAGE}..."
-                    
-                    # Update image using versioned tag (NOT latest)
-                    kubectl set image deployment/${K8S_DEPLOYMENT} \
-                        ${K8S_DEPLOYMENT}=${DOCKER_IMAGE} \
-                        -n ${K8S_NAMESPACE}
-                    
-                    echo "⏳ Waiting for rollout to complete (timeout: 5m)..."
-                    kubectl rollout status deployment/${K8S_DEPLOYMENT} \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=5m
-                    
-                    echo "✅ Rollout completed successfully"
-                """
-            }
-            post {
-                failure {
-                    sh '''
-                        set +e
-                        echo ""
-                        echo "========================================="
-                        echo "❌ Update Image & Rollout stage failed"
-                        echo "========================================="
-                        
-                        # Check if deployment still exists
-                        if ! kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
-                            echo "⚠️ Deployment ${K8S_DEPLOYMENT} not found - skipping rollback"
-                            exit 0
-                        fi
-                        
-                        echo "Checking if current image exists on Docker Hub..."
-                        # Try to inspect the image on Docker Hub (requires manifest tool or alternative)
-                        # For now, we'll proceed with rollback since it\'s a deploy stage failure
-                        
-                        echo "↩️ Rolling back to previous version..."
-                        ROLLBACK_EXIT=0
-                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                        
-                        echo "⏳ Waiting for rollback to complete (timeout: 3m)..."
-                        if ! kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=3m; then
-                            ROLLBACK_EXIT=$?
-                            echo "⚠️ Rollback status check timed out (exit code: $ROLLBACK_EXIT)"
-                        fi
-                        
-                        echo "Forcing deployment image to :latest for stability..."
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \
-                            ${K8S_DEPLOYMENT}=dushyanth25/${DOCKER_IMAGE_NAME}:latest \
-                            -n ${K8S_NAMESPACE}
-                        
-                        echo "========================================="
-                        echo "Rollback procedure completed"
-                        exit 0
-                    '''
+                        git add k8s/deployment.yaml
+                        git commit -m "ci: update image tag to ${IMAGE_TAG} [skip ci]"
+                        git push https://\${GIT_USER}:\${GIT_TOKEN}@github.com/dushyanth25/Dark.git HEAD:main
+
+                        echo "✅ Git updated — Argo CD will auto-sync within 3 minutes"
+                    """
                 }
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify Argo CD Sync') {
             steps {
                 sh """
-                    echo "✅ Verifying Kubernetes deployment..."
-                    echo ""
-                    echo "=== Deployment Status ==="
-                    kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                    
+                    echo "⏳ Waiting 30s for Argo CD to detect Git change..."
+                    sleep 30
+
+                    echo "=== Argo CD App Status ==="
+                    argocd app get mern-app --server localhost:8086 --insecure || true
+
                     echo ""
                     echo "=== Pod Status ==="
                     kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
-                    
-                    echo ""
-                    echo "=== Service Status ==="
-                    kubectl get svc -n ${K8S_NAMESPACE}
-                    
+
                     echo ""
                     echo "=== Recent Logs ==="
-                    kubectl logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --tail=20 --all-containers=true || true
-                    
-                    echo ""
-                    echo "✅ All resources verified"
+                    kubectl logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --tail=20 || true
+
+                    echo "✅ Argo CD sync triggered"
                 """
-            }
-            post {
-                failure {
-                    sh '''
-                        set +e
-                        echo ""
-                        echo "========================================="
-                        echo "❌ Verify Deployment stage failed"
-                        echo "========================================="
-                        
-                        echo "Checking deployment status..."
-                        kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
-                        
-                        echo ""
-                        echo "Deployment pod describe output:"
-                        kubectl describe pod -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
-                        
-                        # Check if deployment still exists
-                        if ! kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
-                            echo "⚠️ Deployment ${K8S_DEPLOYMENT} not found - skipping rollback"
-                            exit 0
-                        fi
-                        
-                        echo ""
-                        echo "↩️ Rolling back to previous version..."
-                        ROLLBACK_EXIT=0
-                        kubectl rollout undo deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                        
-                        echo "⏳ Waiting for rollback to complete (timeout: 3m)..."
-                        if ! kubectl rollout status deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=3m; then
-                            ROLLBACK_EXIT=$?
-                            echo "⚠️ Rollback status check timed out (exit code: $ROLLBACK_EXIT)"
-                        fi
-                        
-                        echo "Forcing deployment image to :latest for stability..."
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \
-                            ${K8S_DEPLOYMENT}=dushyanth25/${DOCKER_IMAGE_NAME}:latest \
-                            -n ${K8S_NAMESPACE}
-                        
-                        echo "========================================="
-                        echo "Rollback procedure completed"
-                        exit 0
-                    '''
-                }
             }
         }
     }
@@ -389,15 +224,14 @@ pipeline {
             sh '''
                 echo ""
                 echo "=========================================="
-                echo "✅ Deployment Successful"
+                echo "✅ Deployment Handed to Argo CD"
                 echo "=========================================="
-                echo "Image: ${DOCKER_IMAGE}"
-                echo "Namespace: ${K8S_NAMESPACE}"
-                echo "Deployment: ${K8S_DEPLOYMENT}"
+                echo "Image pushed: ${DOCKER_IMAGE}"
+                echo "Git updated:  k8s/deployment.yaml → tag ${IMAGE_TAG}"
+                echo "Argo CD:      auto-syncing to cluster"
                 echo ""
-                echo "To access your application:"
-                echo "  kubectl port-forward svc/${K8S_DEPLOYMENT}-service 8080:80 -n ${K8S_NAMESPACE}"
-                echo "  then visit: http://localhost:8080"
+                echo "Monitor sync:"
+                echo "  argocd app get mern-app --server localhost:8086 --insecure"
                 echo "=========================================="
             '''
         }
@@ -413,8 +247,7 @@ pipeline {
                 echo "This typically means a test, quality gate, or security scan failed."
                 echo "Check the logs above for the specific failure reason."
                 echo ""
-                echo "NOTE: Rollback only triggers for deployment stage failures,"
-                echo "not for test or scanning stage failures."
+                echo "NOTE: Argo CD was NOT updated — cluster state unchanged."
                 echo "=========================================="
             '''
         }
