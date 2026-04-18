@@ -169,8 +169,9 @@ pipeline {
         stage('Update Image Tag in Git') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'github-token',
-                    variable: 'GIT_TOKEN'
+                    credentialsId: 'github-pat',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN'
                 )]) {
                     sh """
                         echo "📝 Updating image tag to ${IMAGE_TAG} in k8s/deployment.yaml..."
