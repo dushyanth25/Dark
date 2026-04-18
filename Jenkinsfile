@@ -37,7 +37,7 @@ pipeline {
                 script {
                     checkout scm
                     def commitMsg = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
-                    if (commitMsg.contains('[skip ci]')) {
+                    if (commitMsg.startsWith('ci: update image tag') && commitMsg.contains('[skip ci]')) {
                         currentBuild.result = 'NOT_BUILT'
                         error('Skipping — image tag commit from Jenkins')
                     }
@@ -48,7 +48,7 @@ pipeline {
         stage('Install Backend Dependencies') {
             steps {
                 dir('server') {
-                    sh 'npm ci || npm install'
+                    sh 'npm install'
                 }
             }
         }
@@ -56,7 +56,7 @@ pipeline {
         stage('Install Frontend Dependencies') {
             steps {
                 dir('client') {
-                    sh 'npm ci || npm install'
+                    sh 'npm install'
                 }
             }
         }
