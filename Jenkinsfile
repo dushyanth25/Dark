@@ -4,7 +4,6 @@ pipeline {
     tools {
         nodejs 'node'
     }
-
     environment {
         SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_PROJECT_KEY = 'mern-app'
