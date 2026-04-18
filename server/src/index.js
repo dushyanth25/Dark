@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const path = require('path');
+const fs = require('fs');
 const authRoutes = require('./routes/auth');
 const marketRoutes = require('../routes/marketRoutes');
 const tradeRoutes = require('../routes/tradeRoutes');
@@ -18,7 +19,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes (must come BEFORE static files)
+// 1️⃣ API Routes (must come FIRST)
 app.use('/api/auth', authRoutes);
 app.use('/api', marketRoutes);
 app.use('/api', tradeRoutes);
@@ -28,15 +29,26 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'Gotham server is online', timestamp: new Date().toISOString() });
 });
 
-// ✅ Serve static files from public folder (frontend build)
-app.use(express.static(path.join(__dirname, '../public')));
-
-// ✅ SPA fallback - serve index.html for all non-API routes (LAST before error handler)
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+// 2️⃣ API 404 handler for unknown /api/* routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ message: 'Route not found' });
 });
 
-// Global error handler (must be LAST)
+// 3️⃣ Serve static files from public folder (frontend build)
+app.use(express.static(path.join(__dirname, '../public')));
+
+// 4️⃣ SPA catch-all with file existence check (BEFORE global error handler)
+app.get('*', (req, res) => {
+  const indexPath = path.join(__dirname, '../public/index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // If index.html doesn't exist (e.g., tests without build), return 404
+    res.status(404).json({ message: 'Route not found' });
+  }
+});
+
+// 5️⃣ Global error handler (must be LAST)
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).json({ message: 'Internal server error' });
