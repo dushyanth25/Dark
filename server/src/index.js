@@ -18,10 +18,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Serve static files from public folder (frontend build)
-app.use(express.static(path.join(__dirname, '../public')));
-
-// Routes
+// API Routes (must come BEFORE static files)
 app.use('/api/auth', authRoutes);
 app.use('/api', marketRoutes);
 app.use('/api', tradeRoutes);
@@ -31,12 +28,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'Gotham server is online', timestamp: new Date().toISOString() });
 });
 
-// ✅ Serve index.html for all non-API routes (SPA fallback)
+// ✅ Serve static files from public folder (frontend build)
+app.use(express.static(path.join(__dirname, '../public')));
+
+// ✅ SPA fallback - serve index.html for all non-API routes (LAST before error handler)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// Global error handler
+// Global error handler (must be LAST)
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
   res.status(500).json({ message: 'Internal server error' });
